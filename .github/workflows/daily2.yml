@@ -1,4 +1,4 @@
-name: Daily CDP Download
+name: Daily FPY
 
 on:
   schedule:
