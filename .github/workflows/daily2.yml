@@ -2,7 +2,7 @@ name: Daily FPY
 
 on:
   schedule:
-    - cron: "20 02 * * *"
+    - cron: "15 03 * * *"
   workflow_dispatch:
     inputs:
       start_date:
