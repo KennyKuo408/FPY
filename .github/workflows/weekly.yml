@@ -1,0 +1,115 @@
+name: Weekly Summary
+
+on:
+  schedule:
+    # 台北每週一 09:00 = UTC 週一 01:00
+    # 刻意排在每日報表（台北 07:00）之後，確保上週日的 summary 已 commit
+    - cron: "51 23 * * 0"
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: "起始日 YYYY-MM-DD（留空 = 上週一）"
+        required: false
+        default: ""
+        type: string
+      end_date:
+        description: "結束日 YYYY-MM-DD（留空 = 上週日）"
+        required: false
+        default: ""
+        type: string
+      commit:
+        description: "是否 commit 回 repo（測試時建議不勾）"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-cdp          # 跟 daily 共用，避免同時 push
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TZ: Asia/Taipei
+
+    steps:
+      - name: 取得 repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 決定統計區間
+        id: range
+        env:
+          IN_START: ${{ inputs.start_date }}
+          IN_END: ${{ inputs.end_date }}
+        run: |
+          # 本週一 = 今天往回推 (星期幾 - 1) 天；上週 = 本週一往前 7 天 ~ 1 天
+          dow=$(date +%u)    # 週一=1 ... 週日=7
+          this_monday=$(date -d "today -$((dow - 1)) days" +%Y-%m-%d)
+          START="${IN_START:-$(date -d "$this_monday -7 days" +%Y-%m-%d)}"
+          END="${IN_END:-$(date -d "$this_monday -1 day" +%Y-%m-%d)}"
+          WEEK=$(date -d "$START" +%Y%m%d)    # 例如 20261026
+
+          echo "統計區間：$START ~ $END（輸出標籤 $WEEK）"
+          {
+            echo "start=$START"
+            echo "end=$END"
+            echo "week=$WEEK"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: 安裝 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: 安裝套件
+        run: pip install -r requirements.txt
+
+      - name: 彙整每日 summary
+        run: |
+          python weekly_summary.py \
+            --start "${{ steps.range.outputs.start }}" \
+            --end "${{ steps.range.outputs.end }}" \
+            --out "reports/weekly/${{ steps.range.outputs.week }}"
+          ls -l "reports/weekly/${{ steps.range.outputs.week }}"
+
+      - name: 上傳成 Artifact（測試時可直接下載）
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-${{ steps.range.outputs.week }}
+          path: reports/weekly/${{ steps.range.outputs.week }}/
+
+      - name: Commit 回 GitHub
+        if: github.event_name == 'schedule' || inputs.commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+
+          W="${{ steps.range.outputs.week }}"
+          backup="$RUNNER_TEMP/weekly_$W"
+          rm -rf "$backup"
+          cp -r "reports/weekly/$W" "$backup"
+
+          for i in 1 2 3; do
+            git fetch origin main
+            git reset --hard origin/main
+            rm -rf "reports/weekly/$W"
+            mkdir -p reports/weekly
+            cp -r "$backup" "reports/weekly/$W"
+
+            git add -f "reports/weekly/$W"
+            if git diff --cached --quiet; then
+              echo "沒有變更，不需要 commit"; exit 0
+            fi
+            git commit -m "Weekly report $W"
+            if git push origin HEAD:main; then echo "push 成功"; exit 0; fi
+            echo "push 失敗，第 $i 次重試..."; sleep 5
+          done
+          echo "::error::重試 3 次仍無法 push"; exit 1
