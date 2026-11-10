@@ -1,10 +1,6 @@
 name: Weekly Summary
 
 on:
-  schedule:
-    # 台北每週一 09:00 = UTC 週一 01:00
-    # 刻意排在每日報表（台北 07:00）之後，確保上週日的 summary 已 commit
-    - cron: "51 23 * * 0"
   workflow_dispatch:
     inputs:
       start_date:
