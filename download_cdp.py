@@ -97,6 +97,11 @@ JOBS_BY_LOB = {
 # 原本的 JOBS 照舊,main() 不用改
 JOBS = [job for lob_jobs in JOBS_BY_LOB.values() for job in lob_jobs]
 
+# (model, testStage) -> 要一起查的 testStage 清單;沒列的組合維持只查自己
+TESTSTAGE_ALIASES = {
+    ("NL", "MB"): ["MB", "MB3L"],
+}
+
 # (site, model) -> LoB。results 的 key 是 (site, model, board),board 可能是
 # GEN5_T1C_AUTO、E-Load 這類衍生名稱,所以用 (site, model) 對應,不用 testStage。
 # 這樣 GOSHIN11 的 E-Load 也會自動歸到 LoB 3。
@@ -304,11 +309,15 @@ def parse_args():
 
 def fetch_table(connection, table_name, model, testStage, start_str, end_str, stages=("TD", "PI")):
     stage_list_sql = ",".join(f"'{s}'" for s in stages)
+    ts_list = TESTSTAGE_ALIASES.get((model.upper(), testStage.upper()), [testStage.upper()])
+    ts_keys = [f"ts{i}" for i in range(len(ts_list))]
+    ts_sql = ",".join(f"%({k})s" for k in ts_keys)
+
     query = f"""
         SELECT *
         FROM {table_name} AS t
         WHERE UPPER(t.model) RLIKE %(model)s
-            AND UPPER(t.testStage) LIKE %(testStage)s
+            AND UPPER(t.testStage) IN ({ts_sql})
             AND t.stage IN ({stage_list_sql})
             AND UPPER(t.fixtureId) NOT LIKE '%DOA%'
             AND t.startTime >= %(start)s
@@ -322,14 +331,16 @@ def fetch_table(connection, table_name, model, testStage, start_str, end_str, st
         ORDER BY t.endTimeLocal ASC
     """
 
-    cursor = connection.cursor()
-    cursor.execute(query, {
+    params = {
         "model": f"(^|[^A-Z0-9]){model.upper()}($|[^A-Z0-9])",
-        "testStage": testStage.upper(),
         "start": start_str,
         "end": end_str,
-    })
-    
+    }
+    params.update(dict(zip(ts_keys, ts_list)))
+
+    cursor = connection.cursor()
+    cursor.execute(query, params)
+
     columns = [desc[0] for desc in cursor.description]
     rows = cursor.fetchall()
     return pd.DataFrame(rows, columns=columns)
