@@ -319,6 +319,7 @@ def fetch_table(connection, table_name, model, testStage, start_str, end_str, st
         WHERE UPPER(t.model) RLIKE %(model)s
             AND UPPER(t.testStage) IN ({ts_sql})
             AND t.stage IN ({stage_list_sql})
+            AND t.upn NOT IN ("B91.11710.0004", "B91.11710.0005", "B91.11710.0016", "B91.11710.0017")
             AND UPPER(t.fixtureId) NOT LIKE '%DOA%'
             AND t.startTime >= %(start)s
             AND t.startTime <  %(end)s
